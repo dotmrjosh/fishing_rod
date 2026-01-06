@@ -166,6 +166,30 @@ fn saveEntities(
         );
         defer allocator.free(entity_path);
 
+        if (std.mem.eql(u8, extension, "smdl")) {
+            var load_smdl = smdl.Smdl.parseBuf(allocator, entity.data.?);
+            if (load_smdl) |*s| {
+                defer s.deinit();
+
+                const obj_data = try s.generateObj(allocator);
+                defer allocator.free(obj_data);
+
+                const obj_path = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}.obj",
+                    .{ entity_path },
+                );
+                defer allocator.free(obj_path);
+
+                const obj_file = try output_dir.createFile(obj_path, .{});
+                defer obj_file.close();
+
+                _ = try obj_file.write(obj_data);
+            } else |_| {
+                // dont really care atm if we cant generate obj from smdl in a package
+            }
+        }
+
         const entity_file = try output_dir.createFile(entity_path, .{});
         defer entity_file.close();
 

@@ -7,6 +7,7 @@ const Bitsize = enum(u8) {
     u16 = 1,
 };
 
+allocator: std.mem.Allocator,
 positions: [][3]f32,
 tri_idx_b: [][3]u16,
 
@@ -24,9 +25,11 @@ pub fn loadFile(allocator: std.mem.Allocator, sxr_file: std.fs.File) !Smdl {
 
 pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
     var smdl: Smdl = .{
+        .allocator = allocator,
         .positions = undefined,
         .tri_idx_b = undefined,
     };
+
     var smdl_reader: std.io.Reader = .fixed(smdl_buf);
 
     if (std.mem.eql(u8, try smdl_reader.peek(2), &.{ 0xf3, 0x05 })) {
@@ -51,27 +54,6 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
     _ = unknown_b;
     _ = maybe_asset_id;
 
-    // std.debug.print(
-    //     \\parsing smdl
-    //     \\  version: {}
-    //     \\  unknown: {b}
-    //     \\  block_count: {}
-    //     \\  unknown: {b}
-    //     \\  asset_id: {}
-    //     \\
-    // ,
-    //     .{
-    //         maybe_version,
-    //         unknown_a,
-    //         block_count,
-    //         unknown_b,
-    //         maybe_asset_id,
-    //     },
-    // );
-
-    // var debug_obj = try std.fs.cwd().createFile("debug.obj", .{});
-    // defer debug_obj.close();
-
     for (0..(block_count)) |_| {
         const block_type = try smdl_reader.takeInt(u16, .big);
         const bitsize = try smdl_reader.takeEnum(Bitsize, .big);
@@ -87,47 +69,17 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
         _ = maybe_hint;
         _ = unknown_bb;
 
-        // std.debug.print(
-        //     \\  block {}
-        //     \\    kind:     0b{b:0>8} ({})
-        //     \\    bitsize:  0b{b:0>8} ({})
-        //     \\    compnts:  0b{b:0>8} ({})
-        //     \\    check:    {x}
-        //     \\    hint:     {}
-        //     \\    unknown:  0b{b}
-        //     \\    count:    {}
-        //     \\
-        // ,
-        //     .{
-        //         block_idx,
-        //         block_type,
-        //         block_type,
-        //         bitsize,
-        //         bitsize,
-        //         components,
-        //         components,
-        //         check,
-        //         maybe_hint,
-        //         unknown_bb,
-        //         count,
-        //     },
-        // );
-
         switch (block_type) {
             // vertex positions
             1 => {
-                var line_buf: [2048]u8 = undefined;
-                for (0..count) |_| {
+                // TODO: This assumes only 1 positions block which could be wrong
+                smdl.positions = try allocator.alloc([3]f32, count);
+                for (0..count) |i| {
                     const x: f32 = @bitCast(try smdl_reader.takeInt(u32, .big));
                     const y: f32 = @bitCast(try smdl_reader.takeInt(u32, .big));
                     const z: f32 = @bitCast(try smdl_reader.takeInt(u32, .big));
 
-                    const vertex = try std.fmt.bufPrint(
-                        &line_buf,
-                        "v {} {} {}\n",
-                        .{ x, y, z },
-                    );
-                    _ = try debug_obj.write(vertex);
+                    smdl.positions[i] = [3]f32{ x, y, z };
                 }
             },
             else => {
@@ -156,37 +108,48 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
         idx_reader.toss(9);
         const idx_count = try idx_reader.takeInt(u32, .big);
 
-        // std.debug.print(
-        //     \\  idx
-        //     \\    padding: 0b{b:0>32}
-        //     \\
-        // ,
-        //     .{
-        //         padding,
-        //     },
-        // );
+        smdl.tri_idx_b = try allocator.alloc([3]u16, idx_count / 3);
 
-        var line_buf: [2048]u8 = undefined;
-        for (0..(idx_count / 3)) |_| {
+        for (0..(idx_count / 3)) |i| {
             const a = try idx_reader.takeInt(u16, .big);
             const b = try idx_reader.takeInt(u16, .big);
             const c = try idx_reader.takeInt(u16, .big);
 
-            const index = try std.fmt.bufPrint(
-                &line_buf,
-                "f {} {} {}\n",
-                .{ a + 1, b + 1, c + 1 },
-            );
-            _ = try debug_obj.write(index);
+            smdl.tri_idx_b[i] = [3]u16{ a, b, c };
         }
-
-        // const leftovers = try idx_reader.discardRemaining();
-        // std.debug.print("bits leftover {}\n", .{leftovers});
     }
 
-    return .{};
+    return smdl;
 }
 
 pub fn deinit(self: *Smdl) void {
-    _ = self;
+    self.allocator.free(self.positions);
+    self.allocator.free(self.tri_idx_b);
+}
+
+pub fn generateObj(self: Smdl, allocator: std.mem.Allocator) ![]const u8 {
+    var obj: std.io.Writer.Allocating = .init(allocator);
+    defer obj.deinit();
+
+    var line_buf: [256]u8 = undefined;
+    for (self.positions) |pos| {
+        const v = try std.fmt.bufPrint(
+            &line_buf,
+            "v {} {} {}\n",
+            .{ pos[0], pos[1], pos[2] },
+        );
+        _ = try obj.writer.write(v);
+    }
+
+    for (self.tri_idx_b) |tib| {
+        const v = try std.fmt.bufPrint(
+            &line_buf,
+            "f {} {} {}\n",
+            // we need to add 1 since obj index starts at 1
+            .{ tib[0] + 1, tib[1] + 1, tib[2] + 1 },
+        );
+        _ = try obj.writer.write(v);
+    }
+
+    return try obj.toOwnedSlice();
 }
