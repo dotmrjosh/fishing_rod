@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const Package = @import("./Package.zig");
 pub const Sxr = @import("./Sxr.zig");
+pub const Entity = @import("./Entity.zig");
 
 test "trailer decoding" {
     const testing = std.testing;

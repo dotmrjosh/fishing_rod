@@ -38,6 +38,7 @@ pub fn main() !void {
         } else {
             pkg_dir = try std.fs.cwd().openDir(pkg_dir_path, .{});
         }
+        defer pkg_dir.close();
 
         var pkg: sxr.Package = try .loadDir(allocator, pkg_dir);
         defer pkg.deinit();
@@ -49,20 +50,9 @@ pub fn main() !void {
             }
         };
 
-        const main_output = try cwd.openDir("output/main", .{});
-        for (pkg.mainsxr.entities.items, 0..) |entity, i| {
-            // TODO: if entity data is 0 then its probably a folder with children
-            if (entity.data == null) continue;
-
-            const name = if (entity.name.len == 0) "unnamed" else entity.name;
-            const entity_path = try std.fmt.allocPrint(allocator, "{x}_{s}", .{ i, name });
-            defer allocator.free(entity_path);
-
-            const entity_file = try main_output.createFile(entity_path, .{});
-            defer entity_file.close();
-
-            _ = try entity_file.write(entity.data.?);
-        }
+        var main_output = try cwd.openDir("output/main", .{});
+        defer main_output.close();
+        try saveEntities(allocator, pkg.mainsxr.entities.items, main_output);
 
         for (pkg.sxrlist.items) |sxr_item| {
             const sxr_item_path = try std.fmt.allocPrint(
@@ -78,7 +68,8 @@ pub fn main() !void {
                     else => return err,
                 }
             };
-            const sxr_item_output = try cwd.openDir(sxr_item_path, .{});
+            var sxr_item_output = try cwd.openDir(sxr_item_path, .{});
+            defer sxr_item_output.close();
 
             cwd.makePath("output/main") catch |err| {
                 switch (err) {
@@ -87,19 +78,7 @@ pub fn main() !void {
                 }
             };
 
-            for (sxr_item.entities.items, 0..) |entity, i| {
-                // TODO: if entity data is 0 then its probably a folder with children
-                if (entity.data == null) continue;
-
-                const name = if (entity.name.len == 0) "unnamed" else entity.name;
-                const entity_path = try std.fmt.allocPrint(allocator, "{x}_{s}", .{ i, name });
-                defer allocator.free(entity_path);
-
-                const entity_file = try sxr_item_output.createFile(entity_path, .{});
-                defer entity_file.close();
-
-                _ = try entity_file.write(entity.data.?);
-            }
+            try saveEntities(allocator, sxr_item.entities.items, sxr_item_output);
         }
     } else if (std.mem.endsWith(u8, input_basename, ".sxr")) {
         // Load a single sxr
@@ -131,26 +110,42 @@ pub fn main() !void {
             }
         };
 
-        const output_dir = try cwd.openDir(output_path, .{});
-        for (loaded_sxr.entities.items) |entity| {
-            // TODO: if entity data is 0 then its probably a folder with children
-            if (entity.data == null) continue;
-
-            const name = if (entity.name.len == 0) "unnamed" else entity.name;
-            const extension = if (entity.extension) |ext| ext else "bin";
-            const entity_path = try std.fmt.allocPrint(
-                allocator,
-                "{s}.{s}",
-                .{ name, extension },
-            );
-            defer allocator.free(entity_path);
-
-            const entity_file = try output_dir.createFile(entity_path, .{});
-            defer entity_file.close();
-
-            _ = try entity_file.write(entity.data.?);
-        }
+        var output_dir = try cwd.openDir(output_path, .{});
+        defer output_dir.close();
+        try saveEntities(allocator, loaded_sxr.entities.items, output_dir);
     } else {
         std.debug.print("Seemingly invalid input file (based on names)\n", .{});
+    }
+}
+
+fn saveEntities(
+    allocator: std.mem.Allocator,
+    entities: []sxr.Entity,
+    output_dir: std.fs.Dir,
+) !void {
+    for (entities) |entity| {
+        // if (entity.child_count != 0) {
+        //     // A folder named "" i believe is just the root folder (and usually first)
+        //     std.debug.print(
+        //         \\Folder "{s}" - {} entities\n
+        //         \\
+        //         , .{entity.name, entity.child_count},
+        //     );
+        // }
+        if (entity.data == null) continue;
+
+        const name = if (entity.name.len == 0) "unnamed" else entity.name;
+        const extension = if (entity.extension) |ext| ext else "bin";
+        const entity_path = try std.fmt.allocPrint(
+            allocator,
+            "{s}.{s}",
+            .{ name, extension },
+        );
+        defer allocator.free(entity_path);
+
+        const entity_file = try output_dir.createFile(entity_path, .{});
+        defer entity_file.close();
+
+        _ = try entity_file.write(entity.data.?);
     }
 }
