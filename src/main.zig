@@ -1,5 +1,6 @@
 const std = @import("std");
 const sxr = @import("sxr");
+const smdl = @import("smdl");
 
 pub fn main() !void {
     // Heap
@@ -29,7 +30,10 @@ pub fn main() !void {
     // Processing
     const input_basename = std.fs.path.basename(path_input.?);
     if (std.mem.eql(u8, input_basename, "pkg.json")) {
-        // Load a full pkg.json
+        // =========================================================== //
+        // open and unpack a folder of sxr files defined by a pkg.json //
+        // =========================================================== //
+
         const pkg_dir_path = std.fs.path.dirname(path_input.?).?;
 
         var pkg_dir: std.fs.Dir = undefined;
@@ -81,13 +85,17 @@ pub fn main() !void {
             try saveEntities(allocator, sxr_item.entities.items, sxr_item_output);
         }
     } else if (std.mem.endsWith(u8, input_basename, ".sxr")) {
-        // Load a single sxr
+        // ============================ //
+        // open and unpack a single sxr //
+        // ============================ //
+
         var sxr_file: std.fs.File = undefined;
         if (std.fs.path.isAbsolute(path_input.?)) {
             sxr_file = try std.fs.openFileAbsolute(path_input.?, .{});
         } else {
             sxr_file = try std.fs.cwd().openFile(path_input.?, .{});
         }
+        defer sxr_file.close();
 
         var basename_split = std.mem.splitScalar(u8, input_basename, '.');
         const filename = basename_split.first();
@@ -113,6 +121,21 @@ pub fn main() !void {
         var output_dir = try cwd.openDir(output_path, .{});
         defer output_dir.close();
         try saveEntities(allocator, loaded_sxr.entities.items, output_dir);
+    } else if (std.mem.endsWith(u8, input_basename, ".smdl")) {
+        // ============================ //
+        // open and parse an smdl model //
+        // ============================ //
+
+        var smdl_file: std.fs.File = undefined;
+        if (std.fs.path.isAbsolute(path_input.?)) {
+            smdl_file = try std.fs.openFileAbsolute(path_input.?, .{});
+        } else {
+            smdl_file = try std.fs.cwd().openFile(path_input.?, .{});
+        }
+        defer smdl_file.close();
+
+        var loaded_smdl: smdl.Smdl = try .loadFile(allocator, smdl_file);
+        defer loaded_smdl.deinit();
     } else {
         std.debug.print("Seemingly invalid input file (based on names)\n", .{});
     }

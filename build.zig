@@ -4,6 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const smdl_mod = b.addModule("smdl", .{
+        .root_source_file = b.path("src/smdl/module.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sxr_mod = b.addModule("sxr", .{
         .root_source_file = b.path("src/sxr/module.zig"),
         .target = target,
@@ -16,6 +22,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "sxr", .module = sxr_mod },
+            .{ .name = "smdl", .module = smdl_mod },
         },
     });
 
