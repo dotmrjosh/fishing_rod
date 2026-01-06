@@ -1,5 +1,5 @@
 .{
-    .name = .sxr_extractor,
+    .name = .fishing_rod,
     .version = "0.0.1",
     .minimum_zig_version = "0.15.2",
     .paths = .{
@@ -7,5 +7,5 @@
         "build.zig.zon",
         "src",
     },
-    .fingerprint = 0x718620ed388c3d20,
+    .fingerprint = 0x5f573b9187e38d73,
 }
