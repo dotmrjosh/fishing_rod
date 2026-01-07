@@ -2,10 +2,10 @@ const std = @import("std");
 
 const Entity = @This();
 
-pub const EntityType = enum(u8) {
-    file = 0b0000,
-    compressed_file = 0b0110,
-    type_j = 0b1010, // xor encrypted file?
+pub const Compression = enum(u8) {
+    none = 0b0000,
+    zlib = 0b0110,
+    lz4 = 0b1010,
 };
 
 allocator: std.mem.Allocator,
@@ -13,25 +13,50 @@ name: []const u8,
 child_count: u16,
 data: ?[]const u8,
 extension: ?[]const u8 = null,
-type: EntityType,
+type: Compression,
 
 /// This is parsing an entity buffer not including the u16 size
 pub fn parseBuf(allocator: std.mem.Allocator, entity_buf: []const u8, sxr_buf: []const u8) !Entity {
     var entity_reader: std.io.Reader = .fixed(entity_buf);
     const child_count = try entity_reader.takeInt(u16, .big);
-    const name_len = try entity_reader.takeInt(u16, .big);
-    var name = try entity_reader.readAlloc(allocator, name_len);
+    const name_size = try entity_reader.takeInt(u16, .big);
+    var name = try entity_reader.readAlloc(allocator, name_size);
 
-    entity_reader.toss(8); // unknown area
+    const unk_a = try entity_reader.readAlloc(allocator, 8); // unknown area
+    defer allocator.free(unk_a);
 
     const offset = try entity_reader.takeInt(u64, .big);
     const offset_size = try entity_reader.takeInt(u32, .big);
 
-    const flags = try entity_reader.takeInt(u8, .big);
-    const entity_type = try entity_reader.takeEnum(EntityType, .big);
+    const encrypted = try entity_reader.takeInt(u8, .big) != 0;
+    const compression = try entity_reader.takeEnum(Compression, .big);
 
-    const compressed = flags == 0 and entity_type == EntityType.compressed_file;
-    entity_reader.toss(4); // unknown area
+    const compressed = !encrypted and compression == Compression.zlib;
+    const decoded_size = try entity_reader.takeInt(u32, .big); // unconfirmed
+
+    std.debug.print(
+        \\child_count: {}
+        \\name_size: {}
+        \\name: {s}
+        \\unk_a: {any}
+        \\offset: {}
+        \\offset_size: {}
+        \\encrypted: {}
+        \\compression: {}
+        \\decoded_size: {}
+        \\
+        , .{
+            child_count,
+            name_size,
+            name,
+            unk_a,
+            offset,
+            offset_size,
+            encrypted,
+            compression,
+            decoded_size,
+        },
+    );
 
     var data: ?[]const u8 = null;
 
@@ -57,7 +82,7 @@ pub fn parseBuf(allocator: std.mem.Allocator, entity_buf: []const u8, sxr_buf: [
         .child_count = child_count,
         .data = data,
         .extension = extension,
-        .type = entity_type,
+        .type = compression,
     };
 }
 

@@ -7,7 +7,15 @@ const Bitsize = enum(u8) {
     u16 = 1,
 };
 
+pub const Block = struct {
+    type: u32,
+    bitsize: Bitsize,
+    components: u8,
+    check: u32,
+};
+
 allocator: std.mem.Allocator,
+blocks: []Block,
 positions: [][3]f32,
 tri_idx_b: [][3]u16,
 
@@ -26,6 +34,7 @@ pub fn loadFile(allocator: std.mem.Allocator, sxr_file: std.fs.File) !Smdl {
 pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
     var smdl: Smdl = .{
         .allocator = allocator,
+        .blocks = undefined,
         .positions = undefined,
         .tri_idx_b = undefined,
     };
@@ -54,7 +63,9 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
     _ = unknown_b;
     _ = maybe_asset_id;
 
-    for (0..(block_count)) |_| {
+    smdl.blocks = try allocator.alloc(Block, block_count);
+
+    for (0..(block_count)) |block_idx| {
         const block_type = try smdl_reader.takeInt(u16, .big);
         const bitsize = try smdl_reader.takeEnum(Bitsize, .big);
         const components = try smdl_reader.takeInt(u8, .big);
@@ -63,9 +74,15 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
         const unknown_bb = try smdl_reader.takeInt(u16, .big);
         const count = try smdl_reader.takeInt(u16, .big);
 
+        smdl.blocks[block_idx] = .{
+            .type = block_type,
+            .bitsize = bitsize,
+            .components = components,
+            .check = check,
+        };
+
         // TODO: actually perform a check against the last block to be sure its parsing
         // correctly
-        _ = check;
         _ = maybe_hint;
         _ = unknown_bb;
 
@@ -123,6 +140,7 @@ pub fn parseBuf(allocator: std.mem.Allocator, smdl_buf: []const u8) !Smdl {
 }
 
 pub fn deinit(self: *Smdl) void {
+    self.allocator.free(self.blocks);
     self.allocator.free(self.positions);
     self.allocator.free(self.tri_idx_b);
 }
