@@ -1,6 +1,12 @@
 .{
     .name = .fishing_rod,
     .version = "0.0.1",
+    .dependencies = .{
+        .lz4 = .{
+            .url = "git+https://github.com/allyourcodebase/lz4.git#41f52ab227caf9d48cf88c89a4d2946caa12b102",
+            .hash = "lz4-1.10.0-6-ewyzw-4NAAAWDpY4xpiqr4LQhZQAC0x_rGnW2iPh6jk2",
+        },
+    },
     .minimum_zig_version = "0.15.2",
     .paths = .{
         "build.zig",

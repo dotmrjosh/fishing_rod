@@ -7,7 +7,11 @@ pub const Header = struct {
     /// this is the byte offset to the start of the trailer
     trailer_offset: u64, // big endian
     trailer_length: u32, // big endian
-    flags: [42]u8,
+    flags: [42]u8 = [42]u8{
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    },
 };
 
 allocator: std.mem.Allocator,
@@ -68,7 +72,7 @@ pub fn parseBuf(allocator: std.mem.Allocator, sxr_buf: []const u8) !Sxr {
     const trailer_data = try decodeTrailerAlloc(
         allocator,
         header,
-        sxr_buf[header.trailer_offset..header.trailer_offset+header.trailer_length],
+        sxr_buf[header.trailer_offset .. header.trailer_offset + header.trailer_length],
     );
     defer allocator.free(trailer_data);
 

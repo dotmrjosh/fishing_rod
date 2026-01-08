@@ -4,6 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const lz4_dep = b.dependency("lz4", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const smdl_mod = b.addModule("smdl", .{
         .root_source_file = b.path("src/smdl/module.zig"),
         .target = target,
@@ -15,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    sxr_mod.linkLibrary(lz4_dep.artifact("lz4"));
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

@@ -1,4 +1,7 @@
 const std = @import("std");
+const lz4 = @cImport({
+    @cInclude("lz4.h");
+});
 
 const Entity = @This();
 
@@ -20,73 +23,97 @@ pub fn parseBuf(allocator: std.mem.Allocator, entity_buf: []const u8, sxr_buf: [
     var entity_reader: std.io.Reader = .fixed(entity_buf);
     const child_count = try entity_reader.takeInt(u16, .big);
     const name_size = try entity_reader.takeInt(u16, .big);
-    var name = try entity_reader.readAlloc(allocator, name_size);
+    const name = try entity_reader.readAlloc(allocator, name_size);
 
     const unk_a = try entity_reader.readAlloc(allocator, 8); // unknown area
     defer allocator.free(unk_a);
 
-    const offset = try entity_reader.takeInt(u64, .big);
-    const offset_size = try entity_reader.takeInt(u32, .big);
+    const data_offset = try entity_reader.takeInt(u64, .big);
+    const data_size = try entity_reader.takeInt(u32, .big);
 
     const encrypted = try entity_reader.takeInt(u8, .big) != 0;
     const compression = try entity_reader.takeEnum(Compression, .big);
 
-    const compressed = !encrypted and compression == Compression.zlib;
-    const decoded_size = try entity_reader.takeInt(u32, .big); // unconfirmed
+    const decompressed_size = try entity_reader.takeInt(u32, .big);
 
-    std.debug.print(
-        \\child_count: {}
-        \\name_size: {}
-        \\name: {s}
-        \\unk_a: {any}
-        \\offset: {}
-        \\offset_size: {}
-        \\encrypted: {}
-        \\compression: {}
-        \\decoded_size: {}
-        \\
-        , .{
-            child_count,
-            name_size,
-            name,
-            unk_a,
-            offset,
-            offset_size,
-            encrypted,
-            compression,
-            decoded_size,
-        },
-    );
+    // std.debug.print(
+    //     \\child_count: {}
+    //     \\name_size: {}
+    //     \\name: {s}
+    //     \\unk_a: {any}
+    //     \\data_offset: {}
+    //     \\data_size: {}
+    //     \\encrypted: {}
+    //     \\compression: {}
+    //     \\decompressed_size: {}
+    //     \\
+    // ,
+    //     .{
+    //         child_count,
+    //         name_size,
+    //         name,
+    //         unk_a,
+    //         data_offset,
+    //         data_size,
+    //         encrypted,
+    //         compression,
+    //         decompressed_size,
+    //     },
+    // );
+    // defer std.debug.print("\n", .{});
 
-    var data: ?[]const u8 = null;
+    if (data_size > 0) {
+        var data: []u8 = try allocator.dupe(
+            u8,
+            sxr_buf[data_offset..(data_offset + data_size)],
+        );
 
-    if (compressed) {
-        const comp_data = try allocator.dupe(u8, sxr_buf[offset..(offset + offset_size)]);
-        defer allocator.free(comp_data);
-        data = try decompressZLib(allocator, comp_data);
+        if (encrypted) {
+            decryptEntity(name, data);
+        }
 
-        const old_name = name;
-        defer allocator.free(old_name);
-        name = try std.fmt.allocPrint(allocator, "{s}_deco", .{old_name});
-    } else if (offset_size > 0) {
-        data = try allocator.dupe(u8, sxr_buf[offset..(offset + offset_size)]);
+        if (compression != .none) {
+            const comp_data = data;
+            defer allocator.free(comp_data);
+
+            switch (compression) {
+                .zlib => data = decompressZLib(allocator, comp_data) catch
+                    try allocator.dupe(u8, comp_data), // a couple of weird files
+                .lz4 => data = try decompressLZ4(
+                    allocator,
+                    comp_data,
+                    data_size,
+                    decompressed_size,
+                ),
+                .none => unreachable,
+            }
+        }
+
+        const extension = findExtension(data);
+
+        return .{
+            .allocator = allocator,
+            .name = name,
+            .child_count = child_count,
+            .data = data,
+            .extension = extension,
+            .type = compression,
+        };
     } else {
-        data = null;
+        return .{
+            .allocator = allocator,
+            .name = name,
+            .child_count = child_count, // will be > 0
+            .data = null,
+            .extension = null,
+            .type = compression, // probably none
+        };
     }
 
-    const extension = findExtension(data);
-
-    return .{
-        .allocator = allocator,
-        .name = name,
-        .child_count = child_count,
-        .data = data,
-        .extension = extension,
-        .type = compression,
-    };
+    unreachable;
 }
 
-fn decompressZLib(allocator: std.mem.Allocator, compressed_data: []const u8) ![]const u8 {
+fn decompressZLib(allocator: std.mem.Allocator, compressed_data: []const u8) ![]u8 {
     var data_reader: std.io.Reader = .fixed(compressed_data);
     var deco_buf: [std.compress.flate.max_window_len]u8 = undefined;
     var deco: std.compress.flate.Decompress = .init(
@@ -97,6 +124,77 @@ fn decompressZLib(allocator: std.mem.Allocator, compressed_data: []const u8) ![]
     var out: std.io.Writer.Allocating = .init(allocator);
     _ = try deco.reader.streamRemaining(&out.writer);
     return out.toOwnedSlice();
+}
+
+fn decompressLZ4(
+    allocator: std.mem.Allocator,
+    compressed_data: []const u8,
+    compressed_size: usize,
+    decompressed_size: usize,
+) ![]u8 {
+    // WARN: C will mutate this data even though we've defined it as constant
+    const decompressed_data = try allocator.alloc(u8, decompressed_size);
+    const result = lz4.LZ4_decompress_safe(
+        compressed_data.ptr,
+        decompressed_data.ptr,
+        @intCast(compressed_size),
+        @intCast(decompressed_size),
+    );
+
+    if (@as(usize, @intCast(result)) != decompressed_size)
+        return error.LZ4DecompressionError;
+
+    return decompressed_data;
+}
+
+pub fn decryptEntity(name: []const u8, payload: []u8) void {
+    if (payload.len == 0) return;
+
+    const stored_size: u32 = @intCast(payload.len);
+    const key32: u32 = std.hash.Fnv1a_32.hash(name);
+    std.debug.print("decryption key: {x}\n", .{key32});
+
+    const seed: u32 = (@as(u32, 137) *% stored_size) ^ key32 ^ 0xC413A951;
+
+    const t: u32 = seed ^ (seed << 11);
+    const v31: u32 = t ^ (t >> 8);
+
+    var v32: u32 = v31 ^ (v31 >> 19) ^ 0x52F53BE0;
+    var v34: u32 = v31 ^ 0xDCB47C50;
+    var v35: u32 = (v31 >> 19) ^ v32 ^ 0x4D9D51E6;
+    var v36: u32 = 0xDCB467C6;
+
+    const nwords: usize = (payload.len + 3) / 4;
+    var i: usize = 0;
+    while (i < nwords) : (i += 1) {
+        const base: usize = i * 4;
+        const rem: usize = payload.len - base;
+        const take: usize = if (rem >= 4) 4 else rem;
+
+        var word: u32 = 0;
+        if (take == 4) {
+            const p4: *const [4]u8 = @ptrCast(payload[base .. base + 4].ptr);
+            word = std.mem.readInt(u32, p4, .little);
+        } else {
+            var tmp: [4]u8 = .{ 0, 0, 0, 0 };
+            std.mem.copyForwards(u8, tmp[0..take], payload[base .. base + take]);
+            word = std.mem.readInt(u32, &tmp, .little);
+        }
+
+        const x: u32 = v36 ^ (v36 << 11);
+        const ks: u32 = v35 ^ x ^ (x >> 8) ^ (v35 >> 19);
+
+        word ^= ks;
+
+        v36 = v34;
+        v34 = v32;
+        v32 = v35;
+        v35 = ks;
+
+        var out: [4]u8 = undefined;
+        std.mem.writeInt(u32, &out, word, .little);
+        std.mem.copyForwards(u8, payload[base .. base + take], out[0..take]);
+    }
 }
 
 fn findExtension(buf: ?[]const u8) ?[]const u8 {
