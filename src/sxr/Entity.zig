@@ -77,15 +77,19 @@ pub fn parseBuf(allocator: std.mem.Allocator, entity_buf: []const u8, sxr_buf: [
             defer allocator.free(comp_data);
 
             switch (compression) {
-                .zlib => data = decompressZLib(allocator, comp_data) catch
-                    try allocator.dupe(u8, comp_data),
+                .zlib => data = decompressZLib(allocator, comp_data) catch |err| rtn: {
+                    std.debug.print("zlib decompress err: {any}\n", .{err});
+                    break :rtn try allocator.dupe(u8, comp_data);
+                },
                 .lz4 => data = decompressLZ4(
                     allocator,
                     comp_data,
                     data_size,
                     decompressed_size,
-                ) catch
-                    try allocator.dupe(u8, comp_data),
+                ) catch |err| rtn: {
+                    std.debug.print("lz4 decompress err: {any}\n", .{err});
+                    break :rtn try allocator.dupe(u8, comp_data);
+                },
                 .none => unreachable,
             }
         }
@@ -115,10 +119,6 @@ pub fn parseBuf(allocator: std.mem.Allocator, entity_buf: []const u8, sxr_buf: [
 }
 
 fn decompressZLib(allocator: std.mem.Allocator, compressed_data: []const u8) ![]u8 {
-    errdefer |err| {
-        std.debug.print("zlib decompress err: {any}\n", .{err});
-    }
-
     var data_reader: std.io.Reader = .fixed(compressed_data);
     var deco_buf: [std.compress.flate.max_window_len]u8 = undefined;
     var deco: std.compress.flate.Decompress = .init(
@@ -137,10 +137,6 @@ fn decompressLZ4(
     compressed_size: usize,
     decompressed_size: usize,
 ) ![]u8 {
-    errdefer |err| {
-        std.debug.print("lz4 decompress err: {any}\n", .{err});
-    }
-
     // WARN: C will mutate this data even though we've defined it as constant
     const decompressed_data = try allocator.alloc(u8, decompressed_size);
     const result = lz4.LZ4_decompress_safe(
